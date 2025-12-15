@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DIDComm Messaging Demo</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#7c3aed;--muted:#94a3b8;--glass: rgba(255,255,255,0.03)}
+    body{font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#071029 0%, #071b2a 100%);color:#e6eef8}
+    .card{width:520px;padding:22px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+    h1{margin:0 0 10px;font-size:20px}
+    p{color:var(--muted);margin:0 0 18px;font-size:13px}
+    button{appearance:none;border:0;padding:10px 14px;border-radius:10px;background:var(--accent);color:white;font-weight:600;cursor:pointer;margin-right:8px;margin-bottom:8px}
+    input, textarea{width:100%;background:#1a2332;border:1px solid #2a3a52;border-radius:8px;color:#e6eef8;padding:10px;font-family:inherit;font-size:13px;margin-bottom:12px}
+    textarea{min-height:80px;resize:vertical;font-family:monospace}
+    .info{margin-top:14px;background:var(--glass);padding:12px;border-radius:8px;color:var(--muted);font-size:13px}
+    .label{font-weight:600;color:#94a3b8;margin-bottom:4px}
+    .messages{max-height:200px;overflow-y:auto}
+    .message{background:#1a2332;padding:8px;border-radius:6px;margin-bottom:6px;font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>DIDComm Messaging Demo</h1>
+    <p>Send and receive DIDComm messages through your wallet extension.</p>
+
+    <div>
+      <button id="connectBtn">1. Connect Wallet</button>
+      <button id="sendBtn">2. Send DIDComm Message</button>
+      <button id="refreshBtn">Refresh Messages</button>
+    </div>
+
+    <div class="label">Recipient DID:</div>
+    <input id="recipientInput" placeholder="did:example:recipient123" value="did:example:alice">
+
+    <div class="label">Message:</div>
+    <textarea id="messageInput" placeholder="Enter your message...">Hello from DIDComm!</textarea>
+
+    <div class="info" id="status">
+      <div><strong>Status:</strong> <span id="statusText">Not connected</span></div>
+      <div style="margin-top:8px"><strong>Account:</strong> <span id="account">—</span></div>
+      <div style="margin-top:8px"><strong>Wallet DID:</strong> <span id="walletDid">—</span></div>
+    </div>
+
+    <div class="info">
+      <div class="label">Received Messages:</div>
+      <div id="messages" class="messages">
+        <div style="opacity:.6">No messages</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const connectBtn = document.getElementById('connectBtn');
+    const sendBtn = document.getElementById('sendBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const recipientInput = document.getElementById('recipientInput');
+    const messageInput = document.getElementById('messageInput');
+    const statusText = document.getElementById('statusText');
+    const accountEl = document.getElementById('account');
+    const walletDidEl = document.getElementById('walletDid');
+    const messagesEl = document.getElementById('messages');
+
+    let currentAccount = null;
+    let currentDid = null;
+
+    function short(a){ return a ? a.slice(0,6)+'...'+a.slice(-4) : '—'; }
+
+    // 1. Connect wallet
+    connectBtn.onclick = async () => {
+      if (!window.ethereum) {
+        alert('MyWallet extension not detected. Install and reload.');
+        return;
+      }
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        currentAccount = accounts[0];
+        accountEl.textContent = short(currentAccount);
+        
+        // Get wallet DID
+        currentDid = await window.ethereum.getWalletDid();
+        walletDidEl.textContent = currentDid;
+        
+        statusText.textContent = 'Connected ✓';
+        statusText.style.color = '#10b981';
+        await refreshMessages();
+      } catch (e) {
+        statusText.textContent = 'Connection rejected';
+        statusText.style.color = '#ef4444';
+      }
+    };
+
+    // 2. Send DIDComm message
+    sendBtn.onclick = async () => {
+      if (!window.ethereum) {
+        alert('MyWallet extension not detected.');
+        return;
+      }
+      if (!currentAccount) {
+        alert('Please connect wallet first.');
+        return;
+      }
+      const to = recipientInput.value.trim();
+      const body = messageInput.value.trim();
+      if (!to || !body) {
+        alert('Enter both recipient DID and message.');
+        return;
+      }
+      try {
+        statusText.textContent = 'Sending message...';
+        statusText.style.color = '#f59e0b';
+        
+        const result = await window.ethereum.sendDidCommMessage(to, body);
+        statusText.textContent = 'Message sent ✓';
+        statusText.style.color = '#10b981';
+        messageInput.value = '';
+      } catch (e) {
+        statusText.textContent = 'Failed to send message';
+        statusText.style.color = '#ef4444';
+        console.error('Send error:', e);
+      }
+    };
+
+    // 3. Refresh messages
+    refreshBtn.onclick = refreshMessages;
+
+    async function refreshMessages() {
+      if (!window.ethereum || !currentAccount) return;
+      try {
+        const result = await window.ethereum.getDidCommMessages();
+        const messages = result.messages || [];
+        
+        if (!messages.length) {
+          messagesEl.innerHTML = '<div style="opacity:.6">No messages</div>';
+          return;
+        }
+        
+        messagesEl.innerHTML = '';
+        messages.slice(-10).reverse().forEach(msg => {
+          const div = document.createElement('div');
+          div.className = 'message';
+          div.style.opacity = msg.read ? '0.7' : '1';
+          div.innerHTML = `
+            <div style="font-weight:600; color:#7c9ad4;">${msg.from}</div>
+            <div style="margin:4px 0;">${msg.body.text || JSON.stringify(msg.body)}</div>
+            <div style="opacity:0.6; font-size:10px;">${new Date(msg.created_time).toLocaleString()}</div>
+          `;
+          div.onclick = () => markAsRead(msg.id);
+          messagesEl.appendChild(div);
+        });
+      } catch (e) {
+        console.error('Refresh error:', e);
+      }
+    }
+
+    async function markAsRead(messageId) {
+      try {
+        await window.ethereum.markDidCommMessageAsRead(messageId);
+        await refreshMessages();
+      } catch (e) {
+        console.error('Mark read error:', e);
+      }
+    }
+
+    // Auto-connect if already connected
+    (async () => {
+      if (window.ethereum && window.ethereum.selectedAddress) {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (accounts.length) {
+          currentAccount = accounts[0];
+          accountEl.textContent = short(currentAccount);
+          
+          // Get wallet DID
+          currentDid = await window.ethereum.getWalletDid();
+          walletDidEl.textContent = currentDid;
+          
+          statusText.textContent = 'Connected ✓';
+          statusText.style.color = '#10b981';
+          await refreshMessages();
+        }
+      }
+    })();
+
+    // Refresh messages every 10 seconds
+    setInterval(refreshMessages, 10000);
+  </script>
+</body>
+</html>

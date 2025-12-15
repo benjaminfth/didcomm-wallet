@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MyWallet Extension</title>
+  <style>
+    body { font-family: sans-serif; background: #181c24; color: #e6eef8; margin: 0; padding: 18px; width: 300px; }
+    h2 { margin: 0 0 10px 0; font-size: 18px; }
+    .info { background: #23283a; border-radius: 8px; padding: 10px; margin-top: 10px; font-size: 13px; }
+    .label { color: #94a3b8; font-size: 12px; display:block; margin-bottom:4px; }
+    ul#sites { list-style:none; padding:0; margin:0; max-height:120px; overflow-y:auto; }
+    ul#sites li { background:#1f2433; padding:4px 6px; border-radius:4px; font-size:12px; margin-bottom:4px; word-break:break-all; }
+    code { background: #222; border-radius: 4px; padding: 2px 6px; }
+  </style>
+</head>
+<body>
+  <h2>MyWallet</h2>
+  <div class="info">
+    <div><span class="label">Account:</span> <span id="account">—</span></div>
+    <div style="margin-top:6px"><span class="label">Network:</span> <span id="network">—</span></div>
+  </div>
+  <div class="info">
+    <span class="label">Connected Sites</span>
+    <ul id="sites"><li style="opacity:.6">None</li></ul>
+  </div>
+  <div class="info">
+    <span class="label">DIDComm Messages</span>
+    <ul id="didcommMessages"><li style="opacity:.6">Loading...</li></ul>
+  </div>
+  <script src="popup.js" defer></script>
+</body>
+</html>

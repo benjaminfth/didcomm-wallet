@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>DIDComm Subscription Test</title>
+  <style>
+    body { font-family: monospace; background:#0f1724; color:#e6eef8; padding:20px; }
+    .status { padding:10px; margin:10px 0; border-radius:6px; }
+    .success { background:#064e3b; border:1px solid #10b981; }
+    .error { background:#7f1d1d; border:1px solid #ef4444; }
+    .info { background:#1e3a8a; border:1px solid #3b82f6; }
+    .warning { background:#7c2d12; border:1px solid #f59e0b; }
+    button { padding:8px 16px; margin:5px; border:0; border-radius:6px; background:#7c3aed; color:white; cursor:pointer; }
+    pre { background:#1a202c; padding:10px; border-radius:6px; overflow-x:auto; }
+  </style>
+</head>
+<body>
+  <h1>DIDComm Subscription Diagnostic</h1>
+  
+  <div>
+    <button onclick="checkSubscription()">✅ Check My Subscription</button>
+    <button onclick="sendTestMessage()">📤 Send Test Message</button>
+    <button onclick="checkMessages()">📬 Check Received Messages</button>
+  </div>
+  
+  <div id="logs" style="margin-top:20px;"></div>
+
+  <script>
+    function log(msg, type = 'info') {
+      const div = document.createElement('div');
+      div.className = `status ${type}`;
+      div.innerHTML = new Date().toLocaleTimeString() + ' - ' + msg;
+      document.getElementById('logs').prepend(div);
+    }
+
+    async function checkSubscription() {
+      log('🔍 Checking subscription status...', 'info');
+      
+      if (!window.ethereum) {
+        log('❌ Extension not detected', 'error');
+        return;
+      }
+      
+      try {
+        // Get wallet info
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (!accounts.length) {
+          log('⚠️ Wallet not connected - Click Connect Wallet first', 'warning');
+          return;
+        }
+        
+        const myDid = await window.ethereum.getWalletDid();
+        const myAddress = await window.ethereum.getWalletAddress();
+        
+        log(`<strong>My Wallet Identity:</strong>
+        <pre>Address: ${myAddress}
+DID: ${myDid}</pre>`, 'success');
+        
+        log('💡 To verify SignalR subscription:
+        <br>1. Open <code>chrome://extensions/</code>
+        <br>2. Find "My Simple Wallet" → Click "Inspect views: service worker"
+        <br>3. Look for: <code>[SignalR] ✅ Subscribed to DID group: ${myDid}</code>', 'info');
+        
+      } catch (e) {
+        log(`❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    async function sendTestMessage() {
+      log('📤 Sending test message...', 'info');
+      
+      if (!window.ethereum) {
+        log('❌ Extension not detected', 'error');
+        return;
+      }
+      
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (!accounts.length) {
+          await window.ethereum.request({ method: 'eth_requestAccounts' });
+        }
+        
+        const myDid = await window.ethereum.getWalletDid();
+        
+        // Prompt for recipient DID
+        const recipientDid = prompt('Enter recipient DID:', 'did:example:0x2222222222222222222222222222222222222222');
+        if (!recipientDid) return;
+        
+        const message = prompt('Enter message:', 'Test message from ' + myDid);
+        if (!message) return;
+        
+        log(`Sending message to ${recipientDid}...`, 'info');
+        
+        const result = await window.ethereum.sendDidCommMessage(recipientDid, message);
+        
+        log(`✅ Message sent successfully!
+        <pre>Message ID: ${result.messageId}</pre>`, 'success');
+        
+        log('💡 Check the recipient wallet to see if they received it', 'info');
+        
+      } catch (e) {
+        log(`❌ Send failed: ${e.message}`, 'error');
+      }
+    }
+
+    async function checkMessages() {
+      log('📬 Checking received messages...', 'info');
+      
+      if (!window.ethereum) {
+        log('❌ Extension not detected', 'error');
+        return;
+      }
+      
+      try {
+        const result = await window.ethereum.getDidCommMessages();
+        const messages = result.messages || [];
+        
+        if (messages.length === 0) {
+          log('📭 No messages received yet', 'warning');
+          return;
+        }
+        
+        log(`✅ Found ${messages.length} message(s):`, 'success');
+        
+        messages.forEach((msg, i) => {
+          const text = msg.body.text || JSON.stringify(msg.body);
+          log(`<strong>Message ${i + 1}:</strong>
+          <pre>From: ${msg.from}
+To: ${msg.to}
+Text: ${text}
+Time: ${new Date(msg.created_time).toLocaleString()}
+Read: ${msg.read ? 'Yes' : 'No'}</pre>`, 'info');
+        });
+        
+      } catch (e) {
+        log(`❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    // Auto-check on load
+    setTimeout(checkSubscription, 1000);
+  </script>
+</body>
+</html>

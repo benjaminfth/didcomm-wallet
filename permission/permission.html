@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Site Permission</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#181c24; color:#e6eef8; margin:0; padding:20px; width:340px; }
+    h1 { font-size:18px; margin:0 0 12px; }
+    .origin { font-weight:600; color:#7c9ad4; word-break:break-all; }
+    .box { background:#23283a; padding:12px; border-radius:10px; font-size:13px; margin-bottom:14px; }
+    button { border:0; border-radius:8px; padding:8px 14px; font-weight:600; cursor:pointer; }
+    .approve { background:#16a34a; color:#fff; }
+    .reject { background:#b91c1c; color:#fff; margin-left:8px; }
+  </style>
+</head>
+<body>
+  <h1>Connect Request</h1>
+  <div class="box">
+    Site <div class="origin" id="origin">...</div> requests access to your account.
+  </div>
+  <div>
+    <button class="approve" id="approveBtn">Approve</button>
+    <button class="reject" id="rejectBtn">Reject</button>
+  </div>
+  <script src="permission.js" defer></script>
+</body>
+</html>

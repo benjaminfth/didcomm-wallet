@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SignalR Connection Test</title>
+  <style>
+    body { font-family: monospace; background:#0f1724; color:#e6eef8; padding:20px; }
+    .status { padding:10px; margin:10px 0; border-radius:6px; }
+    .success { background:#064e3b; border:1px solid #10b981; }
+    .error { background:#7f1d1d; border:1px solid #ef4444; }
+    .info { background:#1e3a8a; border:1px solid#3b82f6; }
+    button { padding:8px 16px; margin:5px; border:0; border-radius:6px; background:#7c3aed; color:white; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <h1>SignalR Connection Test</h1>
+  
+  <div id="status"></div>
+  
+  <div>
+    <button onclick="testExtension()">Test Extension Connection</button>
+    <button onclick="checkBackend()">Check Backend</button>
+    <button onclick="checkOffscreen()">Check Offscreen Document</button>
+  </div>
+  
+  <div id="logs" style="margin-top:20px;"></div>
+
+  <script>
+    function log(msg, type = 'info') {
+      const div = document.createElement('div');
+      div.className = `status ${type}`;
+      div.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
+      document.getElementById('logs').prepend(div);
+    }
+
+    async function testExtension() {
+      log('Testing extension...', 'info');
+      if (!window.ethereum) {
+        log('❌ window.ethereum not found - Extension not loaded or page not refreshed', 'error');
+        return;
+      }
+      
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (accounts.length === 0) {
+          log('⚠️ No accounts - Connect wallet first', 'error');
+          return;
+        }
+        
+        const did = await window.ethereum.getWalletDid();
+        log(`✅ Extension OK - DID: ${did}`, 'success');
+        
+        // Test getting messages
+        const result = await window.ethereum.getDidCommMessages();
+        log(`✅ DIDComm methods working - ${result.messages.length} messages`, 'success');
+        
+      } catch (e) {
+        log(`❌ Extension error: ${e.message}`, 'error');
+      }
+    }
+
+    async function checkBackend() {
+      log('Checking backend...', 'info');
+      try {
+        const response = await fetch('https://localhost:7001/api/SendDidCommMessage', {
+          method: 'OPTIONS'
+        });
+        log(`✅ Backend reachable on port 7001`, 'success');
+      } catch (e) {
+        log(`❌ Backend not reachable: ${e.message}`, 'error');
+        log('💡 Make sure backend is running: dotnet run', 'info');
+      }
+    }
+
+    async function checkOffscreen() {
+      log('Checking offscreen document...', 'info');
+      log('💡 Open chrome://extensions → Find "My Simple Wallet" → Click "Inspect views: service worker"', 'info');
+      log('💡 In console, look for "[SignalR Offscreen] Connected successfully!"', 'info');
+    }
+
+    // Auto-run on load
+    setTimeout(() => {
+      log('🔍 Starting automatic tests...', 'info');
+      testExtension();
+      checkBackend();
+    }, 1000);
+  </script>
+</body>
+</html>
