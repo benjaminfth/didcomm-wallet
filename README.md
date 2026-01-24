@@ -774,4 +774,4 @@ For questions or issues:
 
 **Built with ❤️ for the decentralized web**
 
-*Last updated: December 16, 2025*
+*Last updated: jan 24, 2026*
