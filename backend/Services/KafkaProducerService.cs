@@ -30,6 +30,8 @@ public class KafkaProducerService : IKafkaProducerService, IDisposable
         try
         {
             var serializedMessage = JsonSerializer.Serialize(message);
+            
+            // ✅ Add delivery timeout to fail fast if Kafka is down
             var result = await _producer.ProduceAsync(topic, new Message<string, string>
             {
                 Key = Guid.NewGuid().ToString(),
@@ -38,9 +40,14 @@ public class KafkaProducerService : IKafkaProducerService, IDisposable
 
             _logger.LogInformation("Message produced to Kafka topic {Topic} at offset {Offset}", topic, result.Offset);
         }
+        catch (ProduceException<string, string> ex)
+        {
+            _logger.LogError(ex, "❌ Kafka produce failed: {Error}. Kafka may not be running.", ex.Error.Reason);
+            throw new Exception($"Kafka unavailable: {ex.Error.Reason}", ex);
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to produce message to Kafka topic {Topic}", topic);
+            _logger.LogError(ex, "❌ Failed to produce message to Kafka topic {Topic}", topic);
             throw;
         }
     }

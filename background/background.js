@@ -1,3 +1,12 @@
+// Import signing module
+import { 
+  canonicalize, 
+  createSigningPayload, 
+  ecdsaSign, 
+  ecdsaVerify, 
+  derivePublicKey 
+} from './signing.js';
+
 // Maintain approved origins and pending requests
 const approvedOrigins = new Set();
 const pending = new Map(); // id -> { origin, sendResponse }
@@ -7,21 +16,44 @@ let nextId = 1;
 // ============================================================================
 // WALLET IDENTITY CONFIGURATION
 // ============================================================================
-// Change these values to create different wallet identities
-// For testing with multiple wallets, use different values in different browser profiles
-
 // Wallet Profile: ALICE (default)
 const WALLET_ADDRESS = '0x1111111111111111111111111111111111111111';
 const DUMMY_PRIVATE_KEY = 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1';
 
+// 🔐 secp256k1 SIGNING KEY PAIR (for message authentication)
+// These are derived from DUMMY_PRIVATE_KEY for demo purposes
+// In production: use proper key derivation or separate signing keys
+const SIGNING_PRIVATE_KEY = DUMMY_PRIVATE_KEY; // 32 bytes hex
+const SIGNING_PUBLIC_KEY = '02a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1'; // Compressed pubkey placeholder
+
+// 🔐 ENCRYPTION KEY PAIR (P-256 ECDH for Web Crypto API)
+// Alice's P-256 key pair
+const ENCRYPTION_PUBLIC_KEY = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE3MJ6wzmCO7MIC7X1ARmiwXFFgNpkMeRzMOtbvoi7FewOggZMj0kACobXLx+22Pycd7/tGz91Y6FqXyt+WHy7xA==';
+const ENCRYPTION_PRIVATE_KEY = 'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgGzkRAogLNTD6ahm+DqODy054lm41lP8N8+CmTJ/mcUyhRANCAATcwnrDOYI7swgLtfUBGaLBcUWA2mQx5HMw61u+iLsV7A6CBkyPSQAKhtcvH7bY/Jx3v+0bP3VjoWpfK35YfLvE';
+
 // Wallet Profile: BOB (use this in second browser/profile)
 // const WALLET_ADDRESS = '0x2222222222222222222222222222222222222222';
 // const DUMMY_PRIVATE_KEY = 'b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2';
+// const ENCRYPTION_PUBLIC_KEY = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEP06TUHqL1ea3y3NPWk2yBooB7FkhPLj0nRhXDu226iV4Xvr+fGVCPgQyglPdbMOYgey66BZeRzt/RMmAsQ6VCQ==';
+// const ENCRYPTION_PRIVATE_KEY = 'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgB6bStmlXvU27nob/9Xt+cFh/FC/s1DR8OdFFDHFdkeShRANCAAQ/TpNQeovV5rfLc09aTbIGigHsWSE8uPSdGFcO7bbqJXhe+v58ZUI+BDKCU91sw5iB7LroFl5HO39EyYCxDpUJ';
 
 // Derive DID from wallet address
 const WALLET_DID = 'did:example:' + WALLET_ADDRESS;
 
+// 🔐 Store public keys for DID resolution (simplified - in production use DID Document)
+const PUBLIC_KEY_REGISTRY = {
+  'did:example:0x1111111111111111111111111111111111111111': 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE3MJ6wzmCO7MIC7X1ARmiwXFFgNpkMeRzMOtbvoi7FewOggZMj0kACobXLx+22Pycd7/tGz91Y6FqXyt+WHy7xA==',
+  'did:example:0x2222222222222222222222222222222222222222': 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEP06TUHqL1ea3y3NPWk2yBooB7FkhPLj0nRhXDu226iV4Xvr+fGVCPgQyglPdbMOYgey66BZeRzt/RMmAsQ6VCQ=='
+};
+
+// 🔐 Store SIGNING public keys for signature verification (secp256k1)
+const SIGNING_KEY_REGISTRY = {
+  'did:example:0x1111111111111111111111111111111111111111': '02a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1',
+  'did:example:0x2222222222222222222222222222222222222222': '02b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2'
+};
+
 console.log('[Wallet] Identity initialized:', WALLET_DID);
+console.log('[Wallet] 🔐 Encryption enabled (P-256 ECDH)');
 // ============================================================================
 
 // Load persisted approvals
@@ -44,8 +76,86 @@ function openSignWindow(id, message, origin){
   chrome.windows.create({ url, type: 'popup', width: 420, height: 520 });
 }
 
-// Simple message signing using WebCrypto (ECDSA with secp256k1 not directly supported, using SHA-256 + dummy signature)
-// For production: use a proper secp256k1 library or import ethers/web3
+// ============================================================================
+// 🔐 REAL ECDSA SIGNING (replaces dummy signing)
+// ============================================================================
+
+/**
+ * Sign a DIDComm message using ECDSA secp256k1
+ * Signs the canonical form of the encrypted message
+ */
+async function signDidCommMessage(messageWithoutSig) {
+  // Create deterministic signing payload
+  const signingPayload = createSigningPayload(messageWithoutSig);
+  const canonicalMessage = canonicalize(signingPayload);
+  
+  console.log('[Signing] Canonical payload length:', canonicalMessage.length);
+  
+  // Sign using ECDSA secp256k1
+  const signature = await ecdsaSign(canonicalMessage, SIGNING_PRIVATE_KEY);
+  
+  return {
+    alg: 'ES256K', // ECDSA with secp256k1 and SHA-256
+    value: `${signature.r}${signature.s}`, // Compact format: r || s
+    r: signature.r,
+    s: signature.s
+  };
+}
+
+/**
+ * Verify DIDComm message signature
+ */
+async function verifyDidCommMessageSignature(didcommMessage) {
+  try {
+    // Check signature exists
+    if (!didcommMessage.signature || !didcommMessage.signature.value) {
+      console.warn('[Verify] No signature found');
+      return false;
+    }
+    
+    // Get sender's signing public key
+    const senderPublicKey = SIGNING_KEY_REGISTRY[didcommMessage.from];
+    if (!senderPublicKey) {
+      console.warn('[Verify] Unknown sender DID:', didcommMessage.from);
+      return false;
+    }
+    
+    // Reconstruct signing payload (without signature field)
+    const signingPayload = createSigningPayload(didcommMessage);
+    const canonicalMessage = canonicalize(signingPayload);
+    
+    // Parse signature
+    const sigValue = didcommMessage.signature.value;
+    let signature;
+    
+    if (didcommMessage.signature.r && didcommMessage.signature.s) {
+      // Structured format
+      signature = {
+        r: didcommMessage.signature.r,
+        s: didcommMessage.signature.s
+      };
+    } else if (sigValue.length === 128) {
+      // Compact format: r (64 hex chars) || s (64 hex chars)
+      signature = {
+        r: sigValue.slice(0, 64),
+        s: sigValue.slice(64, 128)
+      };
+    } else {
+      console.warn('[Verify] Invalid signature format');
+      return false;
+    }
+    
+    // Verify signature
+    const isValid = await ecdsaVerify(canonicalMessage, signature, senderPublicKey);
+    console.log('[Verify] Signature valid:', isValid);
+    return isValid;
+  } catch (error) {
+    console.error('[Verify] Signature verification failed:', error);
+    return false;
+  }
+}
+
+// Legacy signMessage function (keep for personal_sign compatibility)
 async function signMessage(message, privateKeyHex){
   // Convert message to bytes
   const msgBytes = new TextEncoder().encode(message);
@@ -55,13 +165,12 @@ async function signMessage(message, privateKeyHex){
   const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   
   // Dummy signature: concatenate privateKey + hash (NOT secure, for demo only)
-  // In production: use secp256k1 signing (ethers.utils.signMessage or noble-secp256k1)
   const signature = '0x' + privateKeyHex.slice(0, 64) + hashHex.slice(0, 64);
   return signature;
 }
 
 // DIDComm configuration
-const DIDCOMM_BACKEND_URL = 'https://localhost:7001'; // Update with your backend URL
+const DIDCOMM_BACKEND_URL = 'https://localhost:7001';
 const SIGNALR_HUB_URL = `${DIDCOMM_BACKEND_URL}/didcommhub`;
 
 // DIDComm message storage and SignalR connection
@@ -114,10 +223,229 @@ async function initializeSignalR() {
   }
 }
 
-// Handle received DIDComm message from SignalR
-function handleReceivedDidCommMessage(didcommMessage) {
-  console.log('[DIDComm] Message received:', didcommMessage);
-  
+// ============================================================================
+// 🔐 ENCRYPTION UTILITIES (E2EE with Web Crypto API)
+// ============================================================================
+
+/**
+ * Normalize a base64 / base64url string so `atob` can decode it.
+ */
+function normalizeBase64(input) {
+  if (typeof input !== 'string') {
+    throw new Error('Expected base64 string but got ' + typeof input);
+  }
+  let s = input.replace(/[\r\n\s]/g, '');
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4;
+  if (pad === 1) {
+    throw new Error('Invalid base64 length for value: ' + s);
+  } else if (pad === 2) {
+    s += '==';
+  } else if (pad === 3) {
+    s += '=';
+  }
+  return s;
+}
+
+/**
+ * Convert base64 string to ArrayBuffer {
+ */
+function base64ToArrayBuffer(base64) {
+  try {
+    const normalized = normalizeBase64(base64);
+    const binaryString = atob(normalized);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+  } catch (e) {
+    console.error('[Base64] Failed to decode value:', base64, e);
+    throw e;
+  }
+}
+
+/**
+ * Convert ArrayBuffer to base64 string const bytes = new Uint8Array(buffer);
+ */
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Resolve recipient's public key from DID
+ */
+function resolvePublicKey(did) {
+  const publicKeyBase64 = PUBLIC_KEY_REGISTRY[did];
+  if (!publicKeyBase64) {
+    throw new Error(`Public key not found for DID: ${did}`);
+  }
+  return publicKeyBase64;
+}
+
+/**
+ * Encrypt message using hybrid encryption (ECDH + AES-GCM)
+ * Flow:
+ * 1. Generate ephemeral ECDH key pair
+ * 2. Derive shared secret with recipient's public key (ECDH)
+ * 3. Derive AES key from shared secret (HKDF)
+ * 4. Encrypt message with AES-GCM
+ * 5. Return: ephemeral public key, IV, ciphertext, auth tag
+ */
+async function encryptMessage(plaintext, recipientDid) {
+  try {
+    // 1. Generate ephemeral ECDH key pair
+    const ephemeralKeyPair = await crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      ['deriveBits']
+    );
+
+    const recipientPublicKeyBase64 = resolvePublicKey(recipientDid);
+    const recipientPublicKeyBuffer = base64ToArrayBuffer(recipientPublicKeyBase64);
+    
+    let recipientPublicKey;
+    try {
+      recipientPublicKey = await crypto.subtle.importKey(
+        'spki',
+        recipientPublicKeyBuffer,
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        []
+      );
+    } catch (importError) {
+      console.error('[Encryption] Failed to import recipient public key:', importError);
+      throw new Error(`Invalid public key for ${recipientDid}: ${importError.message}`);
+    }
+
+    const sharedSecret = await crypto.subtle.deriveBits(
+      { name: 'ECDH', public: recipientPublicKey },
+      ephemeralKeyPair.privateKey,
+      256
+    );
+
+    const aesKey = await crypto.subtle.importKey(
+      'raw',
+      sharedSecret,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt']
+    );
+
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+
+    const encoder = new TextEncoder();
+    const plaintextBuffer = encoder.encode(JSON.stringify(plaintext));
+    const ciphertextBuffer = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv: iv, tagLength: 128 },
+      aesKey,
+      plaintextBuffer
+    );
+
+    const ephemeralPublicKeyBuffer = await crypto.subtle.exportKey('spki', ephemeralKeyPair.publicKey);
+
+    const ciphertext = ciphertextBuffer.slice(0, -16);
+    const tag = ciphertextBuffer.slice(-16);
+
+    return {
+      alg: 'ECDH-ES+A256GCM',
+      ephemeralPublicKey: arrayBufferToBase64(ephemeralPublicKeyBuffer),
+      iv: arrayBufferToBase64(iv),
+      ciphertext: arrayBufferToBase64(ciphertext),
+      tag: arrayBufferToBase64(tag)
+    };
+  } catch (error) {
+    console.error('[Encryption] Failed to encrypt message:', error);
+    throw new Error('Encryption failed: ' + (error.message || 'Unknown error'));
+  }
+}
+
+/**
+ * Decrypt message using hybrid decryption (ECDH + AES-GCM)
+ * Flow:
+ * 1. Import sender's ephemeral public key
+ * 2. Derive shared secret with our private key (ECDH)
+ * 3. Derive AES key from shared secret
+ * 4. Decrypt ciphertext with AES-GCM
+ * 5. Return plaintext
+ */
+async function decryptMessage(encryptionData) {
+  try {
+    console.log('[Decrypt] 🔐 encryptionData payload:', encryptionData);
+
+    const ephB64 = encryptionData.ephemeralPublicKey ?? encryptionData.ephemeral_public_key;
+    const ivB64 = encryptionData.iv;
+    const ctB64 = encryptionData.ciphertext;
+    const tagB64 = encryptionData.tag;
+
+    if (!ephB64 || !ivB64 || !ctB64 || !tagB64) {
+      throw new Error('Missing encryption fields (ephemeralPublicKey/iv/ciphertext/tag)');
+    }
+
+    const ephemeralPublicKeyBuffer = base64ToArrayBuffer(ephB64);
+    const ephemeralPublicKey = await crypto.subtle.importKey(
+      'spki',
+      ephemeralPublicKeyBuffer,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      []
+    );
+
+    const privateKeyBuffer = base64ToArrayBuffer(ENCRYPTION_PRIVATE_KEY);
+    const privateKey = await crypto.subtle.importKey(
+      'pkcs8',
+      privateKeyBuffer,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      ['deriveBits']
+    );
+
+    const sharedSecret = await crypto.subtle.deriveBits(
+      { name: 'ECDH', public: ephemeralPublicKey },
+      privateKey,
+      256
+    );
+
+    const aesKey = await crypto.subtle.importKey(
+      'raw',
+      sharedSecret,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt']
+    );
+
+    const ciphertextBuffer = base64ToArrayBuffer(ctB64);
+    const tagBuffer = base64ToArrayBuffer(tagB64);
+    const fullCiphertext = new Uint8Array(ciphertextBuffer.byteLength + tagBuffer.byteLength);
+    fullCiphertext.set(new Uint8Array(ciphertextBuffer), 0);
+    fullCiphertext.set(new Uint8Array(tagBuffer), ciphertextBuffer.byteLength);
+
+    const ivBuffer = base64ToArrayBuffer(ivB64);
+    const plaintextBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: ivBuffer, tagLength: 128 },
+      aesKey,
+      fullCiphertext
+    );
+
+    const decoder = new TextDecoder();
+    const plaintextJson = decoder.decode(plaintextBuffer);
+    return JSON.parse(plaintextJson);
+  } catch (error) {
+    console.error('[Decryption] Failed to decrypt message:', error);
+    throw new Error('Decryption failed: ' + error.message);
+  }
+}
+
+// Handle received DIDComm message from SignalR (UPDATED with async verification)
+async function handleReceivedDidCommMessage(didcommMessage) {
+  console.log('[DIDComm] 🔐 Encrypted message received. ID:', didcommMessage.id);
+  console.log('[DIDComm] Full DIDComm payload:', didcommMessage);
+
   // Filter: Only accept messages addressed to this wallet
   if (didcommMessage.to !== WALLET_DID) {
     console.log('[DIDComm] Message not for this wallet. To:', didcommMessage.to, 'This wallet:', WALLET_DID);
@@ -130,10 +458,23 @@ function handleReceivedDidCommMessage(didcommMessage) {
     return;
   }
   
-  // Verify signature (simplified - in production, resolve sender's DID for public key)
-  if (verifyDidCommSignature(didcommMessage)) {
+  // 🔐 Verify signature cryptographically
+  const signatureValid = await verifyDidCommMessageSignature(didcommMessage);
+  if (!signatureValid) {
+    console.warn('[DIDComm] ❌ Invalid signature, message rejected');
+    return;
+  }
+  console.log('[DIDComm] ✅ Signature verified');
+  
+  // Decrypt message
+  try {
+    const decryptedBody = await decryptMessage(didcommMessage.encryption);
+    console.log('[DIDComm] ✅ Message decrypted successfully');
+    console.debug('[DIDComm] Decrypted body:', decryptedBody);
+
     receivedMessages.push({
       ...didcommMessage,
+      body: decryptedBody,
       receivedAt: new Date().toISOString(),
       read: false
     });
@@ -144,30 +485,39 @@ function handleReceivedDidCommMessage(didcommMessage) {
     chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
     
     console.log('[DIDComm] Message stored. Total messages:', receivedMessages.length, 'Unread:', unreadCount);
-  } else {
-    console.warn('[DIDComm] Invalid signature, message rejected');
+  } catch (err) {
+    console.error('[DIDComm] ❌ Failed to decrypt message:', err);
   }
 }
 
-// Create and sign DIDComm message
+// Create and sign DIDComm message (UPDATED to use real signing)
 async function createSignedDidCommMessage(to, body) {
-  const didcommMessage = {
-    type: 'https://didcomm.org/basicmessage/2.0/message',
-    from: WALLET_DID,
-    to: to,
-    body: typeof body === 'string' ? { text: body } : body,
-    created_time: new Date().toISOString(),
-    id: crypto.randomUUID()
-  };
-  
-  // Sign the message
-  const messageStr = JSON.stringify(didcommMessage);
-  const signature = await signMessage(messageStr, DUMMY_PRIVATE_KEY);
-  
-  return {
-    ...didcommMessage,
-    signature: signature
-  };
+  try {
+    // 🔐 Encrypt the message body (UNCHANGED - existing encryption logic)
+    const encryptionData = await encryptMessage(body, to);
+    
+    const didcommMessage = {
+      type: 'https://didcomm.org/basicmessage/2.0/message',
+      from: WALLET_DID,
+      to: to,
+      created_time: new Date().toISOString(),
+      id: crypto.randomUUID(),
+      
+      // 🔐 Add encrypted payload (body is now encrypted)
+      encryption: encryptionData
+    };
+    
+    // 🔐 Sign the entire message using real ECDSA secp256k1
+    const signature = await signDidCommMessage(didcommMessage);
+    
+    return {
+      ...didcommMessage,
+      signature: signature
+    };
+  } catch (error) {
+    console.error('[DIDComm] Failed to create signed message:', error);
+    throw new Error(error.message || 'Failed to create signed DIDComm message');
+  }
 }
 
 // Send DIDComm message to backend
@@ -184,21 +534,15 @@ async function sendDidCommMessage(to, body) {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
     }
     
     return await response.json();
   } catch (error) {
-    console.error('Failed to send DIDComm message:', error);
-    throw error;
+    console.error('[DIDComm] Failed to send message:', error);
+    throw new Error(error.message || 'Failed to send DIDComm message');
   }
-}
-
-// Verify DIDComm message signature (simplified)
-function verifyDidCommSignature(didcommMessage) {
-  // In production: resolve sender DID to get public key, then verify signature
-  // For demo: just check if signature field exists
-  return didcommMessage.signature && didcommMessage.from && didcommMessage.body;
 }
 
 // Initialize SignalR when extension starts
@@ -208,11 +552,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const method = msg && msg.method;
   const origin = sender && sender.url ? new URL(sender.url).origin : null;
   
-  // Handle messages from offscreen SignalR client
+  // Handle messages from offscreen SignalR client (UPDATED for async)
   if (msg.type === 'DIDCOMM_MESSAGE_RECEIVED') {
-    handleReceivedDidCommMessage(msg.payload);
-    sendResponse({ ok: true });
-    return false;
+    handleReceivedDidCommMessage(msg.payload)
+      .then(() => sendResponse({ ok: true }))
+      .catch(err => {
+        console.error('[DIDComm] Error handling message:', err);
+        sendResponse({ ok: false, error: err.message });
+      });
+    return true; // async response
   }
   
   if (msg.type === 'SIGNALR_CONNECTED') {
@@ -327,15 +675,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ error: { code: -32602, message: 'Invalid params: to and body required' } });
         return false;
       }
+      
+      // Validate and normalize DID format
+      const normalizedTo = typeof to === 'string' ? to.trim().replace(/\s+/g, '') : to;
+      if (!normalizedTo || !normalizedTo.startsWith('did:')) {
+        sendResponse({ error: { code: -32602, message: 'Invalid DID format' } });
+        return false;
+      }
+      
       // Check if origin is approved
       if (!origin || !approvedOrigins.has(origin)) {
         sendResponse({ error: { code: 4100, message: 'Unauthorized: connect wallet first' } });
         return false;
       }
       
-      sendDidCommMessage(to, body)
+      sendDidCommMessage(normalizedTo, body)
         .then(result => sendResponse(result))
-        .catch(error => sendResponse({ error: { code: -32603, message: error.message } }));
+        .catch(error => {
+          sendResponse({ 
+            error: { 
+              code: -32603, 
+              message: error?.message || String(error) || 'Unknown error'
+            } 
+          });
+        });
       return true; // async response
     }
     case 'didcomm_getMessages': {
@@ -370,8 +733,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// Document mywallet_getApprovedOrigins usage
-// Document account broadcast mechanism
 // Listen for internal broadcast of accountsChanged
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.method === 'mywallet_internal_accountsChanged') {

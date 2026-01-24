@@ -26,7 +26,10 @@ if (!document.documentElement.hasAttribute('data-mywallet-injected')) {
         chrome.runtime.sendMessage({ method: data.method, params: data.params }, (response) => {
           // Check if extension context is still valid
           if (chrome.runtime.lastError) {
-            const err = { code: -32000, message: chrome.runtime.lastError.message };
+            const err = { 
+              code: -32000, 
+              message: chrome.runtime.lastError.message 
+            };
             window.postMessage({
               type: 'MYWALLET_RESPONSE',
               id: data.id,
@@ -36,11 +39,16 @@ if (!document.documentElement.hasAttribute('data-mywallet-injected')) {
             return;
           }
           
+          // ✅ Preserve full error details (including nested errors)
           const err = (response && response.error) || null;
           window.postMessage({
             type: 'MYWALLET_RESPONSE',
             id: data.id,
-            error: err || undefined,
+            error: err ? {
+              code: err.code || -32603,
+              message: err.message || String(err),
+              data: err.data // ✅ Preserve additional error data
+            } : undefined,
             result: err ? undefined : response
           }, '*');
         });
@@ -49,7 +57,10 @@ if (!document.documentElement.hasAttribute('data-mywallet-injected')) {
         window.postMessage({
           type: 'MYWALLET_RESPONSE',
           id: data.id,
-          error: { code: -32603, message: 'Extension disconnected. Please reload the page.' },
+          error: { 
+            code: -32603, 
+            message: `Extension error: ${e.message}` // ✅ Include actual error
+          },
           result: undefined
         }, '*');
       }

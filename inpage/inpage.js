@@ -21,7 +21,15 @@
       if (!entry) return;
       pending.delete(data.id);
       const { resolve, reject, method } = entry;
-      if (data.error) { reject(Object.assign(new Error(data.error.message), data.error)); return; }
+      
+      // ✅ Improved error handling with full details
+      if (data.error) { 
+        const error = new Error(data.error.message || 'Unknown error');
+        error.code = data.error.code;
+        if (data.error.data) error.data = data.error.data;
+        reject(error);
+        return;
+      }
 
       // Update local state for certain methods
       if (method === 'eth_requestAccounts' || method === 'eth_accounts'){

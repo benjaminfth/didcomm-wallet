@@ -27,59 +27,97 @@ public class KafkaConsumerService : BackgroundService
         
         _logger.LogInformation("Kafka consumer starting for topic: {Topic}", _config.DidCommTopic);
 
-        try
+        // ✅ Add retry logic with exponential backoff
+        int retryCount = 0;
+        const int maxRetries = 5;
+
+        while (!stoppingToken.IsCancellationRequested && retryCount < maxRetries)
         {
-            var consumerConfig = new ConsumerConfig
+            try
             {
-                BootstrapServers = _config.BootstrapServers,
-                GroupId = "didcomm-consumer-group",
-                AutoOffsetReset = AutoOffsetReset.Latest,
-                // Add connection timeout to prevent blocking
-                SessionTimeoutMs = 10000,
-                SocketTimeoutMs = 5000
-            };
-
-            _consumer = new ConsumerBuilder<string, string>(consumerConfig).Build();
-            _consumer.Subscribe(_config.DidCommTopic);
-            _logger.LogInformation("Kafka consumer started for topic: {Topic}", _config.DidCommTopic);
-
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
+                var consumerConfig = new ConsumerConfig
                 {
-                    var consumeResult = _consumer.Consume(TimeSpan.FromMilliseconds(1000));
-                    if (consumeResult != null)
+                    BootstrapServers = _config.BootstrapServers,
+                    GroupId = "didcomm-consumer-group",
+                    AutoOffsetReset = AutoOffsetReset.Latest,
+                    // ✅ Reduce timeouts to fail faster
+                    SessionTimeoutMs = 6000,
+                    SocketTimeoutMs = 3000,
+                    // ✅ Add API version fallback for older Kafka
+                    ApiVersionRequest = true,
+                    ApiVersionFallbackMs = 0
+                };
+
+                _consumer = new ConsumerBuilder<string, string>(consumerConfig).Build();
+                _consumer.Subscribe(_config.DidCommTopic);
+                _logger.LogInformation("✅ Kafka consumer started for topic: {Topic}", _config.DidCommTopic);
+                
+                retryCount = 0; // Reset retry count on success
+
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    try
                     {
-                        await ProcessMessage(consumeResult.Message.Value);
+                        var consumeResult = _consumer.Consume(TimeSpan.FromMilliseconds(1000));
+                        if (consumeResult != null)
+                        {
+                            await ProcessMessage(consumeResult.Message.Value);
+                        }
+                    }
+                    catch (ConsumeException ex)
+                    {
+                        if (ex.Error.Code == ErrorCode.UnknownTopicOrPart)
+                        {
+                            _logger.LogWarning(
+                                ex,
+                                "Kafka topic '{Topic}' does not exist yet. Create it (once) with:\n" +
+                                "  docker exec wallet-kafka-1 /opt/kafka/bin/kafka-topics.sh --create \\\n" +
+                                "    --topic {Topic} --bootstrap-server {Bootstrap} --partitions 1 --replication-factor 1",
+                                _config.DidCommTopic,
+                                _config.DidCommTopic,
+                                _config.BootstrapServers
+                            );
+                            await Task.Delay(10000, stoppingToken);
+                        }
+                        else
+                        {
+                            _logger.LogWarning(ex, "Kafka consume error (will retry)");
+                            await Task.Delay(2000, stoppingToken);
+                        }
                     }
                 }
-                catch (ConsumeException ex)
+                break; // Exit retry loop if we get here
+            }
+            catch (KafkaException ex)
+            {
+                retryCount++;
+                var delay = Math.Min(1000 * Math.Pow(2, retryCount), 30000); // Exponential backoff, max 30s
+                _logger.LogWarning(ex, "⚠️ Kafka connection failed (attempt {Retry}/{Max}). Retrying in {Delay}ms...", 
+                    retryCount, maxRetries, delay);
+                
+                if (retryCount >= maxRetries)
                 {
-                    _logger.LogWarning(ex, "Kafka consume error (will retry)");
-                    // Wait before retry to avoid spamming logs
-                    await Task.Delay(2000, stoppingToken);
+                    _logger.LogError("❌ Kafka connection failed after {Max} retries. Consumer will not start. Messages will only be delivered via direct SignalR broadcast.", maxRetries);
+                    break;
                 }
-                catch (KafkaException ex)
-                {
-                    _logger.LogWarning(ex, "Kafka connection error (will retry in 5s)");
-                    await Task.Delay(5000, stoppingToken);
-                }
+                
+                await Task.Delay((int)delay, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Kafka consumer stopping...");
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Unexpected error in Kafka consumer");
+                retryCount++;
+                await Task.Delay(5000, stoppingToken);
             }
         }
-        catch (OperationCanceledException)
-        {
-            // Expected when cancellation is requested
-            _logger.LogInformation("Kafka consumer stopping...");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Kafka consumer failed to start - continuing without Kafka");
-        }
-        finally
-        {
-            _consumer?.Close();
-            _consumer?.Dispose();
-        }
+
+        _consumer?.Close();
+        _consumer?.Dispose();
     }
 
     private async Task ProcessMessage(string messageValue)

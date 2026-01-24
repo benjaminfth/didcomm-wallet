@@ -20,8 +20,19 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 });
 
 // Add services
-builder.Services.AddControllers();
-builder.Services.AddSignalR();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // ✅ Use camelCase for JSON serialization (JavaScript convention)
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
+
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        // ✅ Use camelCase for SignalR JSON as well
+        options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
 
 // Add CORS for wallet extension
 builder.Services.AddCors(options =>
@@ -83,8 +94,26 @@ public class DidCommMessage
     public string Type { get; set; } = "";
     public string From { get; set; } = "";
     public string To { get; set; } = "";
-    public object Body { get; set; } = new();
+    // 🔐 Body is now encrypted - backend cannot read it
+    public EncryptionData? Encryption { get; set; }
     public string CreatedTime { get; set; } = "";
     public string Id { get; set; } = "";
-    public string? Signature { get; set; }
+    public SignatureData? Signature { get; set; }
+}
+
+// 🔐 Encryption metadata (backend is blind to plaintext)
+public class EncryptionData
+{
+    public string Alg { get; set; } = "ECDH-ES+A256GCM";
+    public string EphemeralPublicKey { get; set; } = "";
+    public string Iv { get; set; } = "";
+    public string Ciphertext { get; set; } = "";
+    public string Tag { get; set; } = "";
+}
+
+// 🔐 Signature metadata
+public class SignatureData
+{
+    public string Alg { get; set; } = "ES256K";
+    public string Value { get; set; } = "";
 }

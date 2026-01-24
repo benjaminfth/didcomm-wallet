@@ -4,7 +4,8 @@
   "version": "0.2.1",
   "description": "Minimal EIP-1193 demo provider with permission gating and message signing.",
   "background": {
-    "service_worker": "background/background.js"
+    "service_worker": "background/background.js",
+    "type": "module"
   },
   "action": {
     "default_popup": "popup/popup.html",

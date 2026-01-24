@@ -1,20 +1,20 @@
 {
   "format": 1,
   "restore": {
-    "D:\\CODING\\oc\\wallet\\backend\\DidCommBackend.csproj": {}
+    "/Users/benjamin/Coding/oc/wallet/backend/DidCommBackend.csproj": {}
   },
   "projects": {
-    "D:\\CODING\\oc\\wallet\\backend\\DidCommBackend.csproj": {
+    "/Users/benjamin/Coding/oc/wallet/backend/DidCommBackend.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\CODING\\oc\\wallet\\backend\\DidCommBackend.csproj",
+        "projectUniqueName": "/Users/benjamin/Coding/oc/wallet/backend/DidCommBackend.csproj",
         "projectName": "DidCommBackend",
-        "projectPath": "D:\\CODING\\oc\\wallet\\backend\\DidCommBackend.csproj",
-        "packagesPath": "C:\\Users\\HP\\.nuget\\packages\\",
-        "outputPath": "D:\\CODING\\oc\\wallet\\backend\\obj\\",
+        "projectPath": "/Users/benjamin/Coding/oc/wallet/backend/DidCommBackend.csproj",
+        "packagesPath": "/Users/benjamin/.nuget/packages/",
+        "outputPath": "/Users/benjamin/Coding/oc/wallet/backend/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\HP\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/Users/benjamin/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net6.0"
@@ -38,7 +38,7 @@
           "auditLevel": "low",
           "auditMode": "direct"
         },
-        "SdkAnalysisLevel": "9.0.300"
+        "SdkAnalysisLevel": "10.0.100"
       },
       "frameworks": {
         "net6.0": {
@@ -70,15 +70,11 @@
               "version": "[6.0.36, 6.0.36]"
             },
             {
-              "name": "Microsoft.NETCore.App.Host.win-x64",
+              "name": "Microsoft.NETCore.App.Host.osx-arm64",
               "version": "[6.0.36, 6.0.36]"
             },
             {
               "name": "Microsoft.NETCore.App.Ref",
-              "version": "[6.0.36, 6.0.36]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Ref",
               "version": "[6.0.36, 6.0.36]"
             }
           ],
@@ -90,7 +86,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.305\\RuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/10.0.101/RuntimeIdentifierGraph.json"
         }
       }
     }

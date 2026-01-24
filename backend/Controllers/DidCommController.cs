@@ -31,28 +31,42 @@ public class DidCommController : ControllerBase
                 return BadRequest(new { error = "From and To fields are required" });
             }
 
-            // Log the message
-            _logger.LogInformation("Received DIDComm message from {From} to {To}", message.From, message.To);
+            // 🔐 Validate encryption data is present
+            if (message.Encryption == null || string.IsNullOrEmpty(message.Encryption.Ciphertext))
+            {
+                return BadRequest(new { error = "Encrypted payload is required" });
+            }
+
+            // Log the message (encrypted - backend cannot read content)
+            _logger.LogInformation("🔐 Received encrypted DIDComm message from {From} to {To}", message.From, message.To);
 
             // Optional: Verify signature here (simplified for demo)
-            if (string.IsNullOrEmpty(message.Signature))
+            if (message.Signature == null || string.IsNullOrEmpty(message.Signature.Value))
             {
                 _logger.LogWarning("DIDComm message has no signature");
             }
 
-            // Send to Kafka
-            await _kafkaProducer.ProduceAsync("didcomm-messages", message);
+            // ✅ Try Kafka first, but don't block on failure
+            try
+            {
+                await _kafkaProducer.ProduceAsync("didcomm-messages", message);
+                _logger.LogDebug("Message sent to Kafka");
+            }
+            catch (Exception kafkaEx)
+            {
+                _logger.LogWarning(kafkaEx, "⚠️ Kafka unavailable, using direct SignalR only");
+            }
 
-            // Broadcast to recipient's DID group via SignalR
+            // ✅ Always broadcast via SignalR (ensures delivery even if Kafka fails)
             await _hubContext.Clients.Group(message.To).SendAsync("DidCommMessageReceived", message);
-            _logger.LogInformation("Message broadcast to group: {To}", message.To);
+            _logger.LogInformation("🔐 Message broadcast to group: {To}", message.To);
 
             return Ok(new { success = true, messageId = message.Id });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process DIDComm message");
-            return StatusCode(500, new { error = "Internal server error" });
+            _logger.LogError(ex, "Failed to process message");
+            return StatusCode(500, new { error = ex.Message });
         }
     }
 
