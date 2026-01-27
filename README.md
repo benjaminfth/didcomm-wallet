@@ -52,9 +52,11 @@ The wallet uses **Decentralized Identifiers (DIDs)** in the format `did:example:
 - ✅ **Send DIDComm Messages** - Send messages to other wallets by DID
 - ✅ **Receive Messages Real-Time** - WebSocket-based instant message delivery
 - ✅ **🔐 End-to-End Encryption (E2EE)** - Messages encrypted with recipient's public key
-- ✅ **Message Signature** - Messages signed with sender's private key
+- ✅ **🔐 Cryptographic Message Signing** - Messages signed with sender's private key using ECDSA secp256k1
 - ✅ **Message Verification** - Validate sender signatures
+- ✅ **🔐 Automatic Acknowledgements (ACK)** - Cryptographic receipts for message delivery
 - ✅ **Inbox Management** - View received messages in extension popup
+- ✅ **Sent Message Tracking** - View sent messages with ACK status
 - ✅ **Unread Count Badge** - Visual notification for new messages
 - ✅ **Message Filtering** - Only receive messages addressed to your DID
 - ✅ **🔐 Backend Blind to Content** - Server cannot read message plaintext
@@ -483,6 +485,51 @@ console.log('Received messages:', messages);
 
 ## 📨 DIDComm Messaging
 
+### DIDComm v2 Message Structure
+
+All messages follow the **DIDComm v2 plaintext format** before encryption:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "type": "https://didcomm.org/basicmessage/2.0/message",
+  "from": "did:example:0x1111111111111111111111111111111111111111",
+  "to": ["did:example:0x2222222222222222222222222222222222222222"],
+  "created_time": 1710000000,
+  "body": {
+    "text": "Hello from Alice!"
+  }
+}
+```
+
+### Message Types
+
+| Purpose | DIDComm Type URI |
+|---------|------------------|
+| Basic text message | `https://didcomm.org/basicmessage/2.0/message` |
+| Acknowledgement | `https://didcomm.org/notification/ack/2.0` |
+| Approval request | `https://example.org/didcomm/approval-request/1.0` |
+| Approval response | `https://example.org/didcomm/approval-response/1.0` |
+
+### Message Threading
+
+Responses and acknowledgements reference the original message via `thid` (thread ID):
+
+```json
+{
+  "id": "new-unique-id",
+  "type": "https://didcomm.org/notification/ack/2.0",
+  "from": "did:example:0x2222...",
+  "to": ["did:example:0x1111..."],
+  "created_time": 1710000005,
+  "thid": "550e8400-e29b-41d4-a716-446655440000",
+  "body": {
+    "status": "received",
+    "received_at": 1710000005
+  }
+}
+```
+
 ### Message Format
 
 🔐 **Encrypted Message** (sent to backend):
@@ -508,30 +555,148 @@ console.log('Received messages:', messages);
 }
 ```
 
-**Decrypted Body** (only visible to sender and receiver):
+### 🔐 Acknowledgement Messages
+
+ACKs are sent automatically when messages are successfully received, verified, and decrypted:
 
 ```json
 {
-  "text": "Hello Bob from Alice!"
+  "id": "ack-message-id-67890",
+  "type": "https://didcomm.org/notification/ack/2.0",
+  "from": "did:example:0x2222222222222222222222222222222222222222",
+  "to": "did:example:0x1111111111111111111111111111111111111111",
+  "thid": "unique-message-id-12345",
+  "createdTime": "2025-12-16T10:30:05Z",
+  "encryption": {
+    // Same encryption as regular messages
+  },
+  "signature": {
+    // Same signing as regular messages  
+  }
 }
 ```
 
-### Signature Verification
+**Decrypted ACK Body** (only visible to original sender):
 
-Messages are signed using the sender's private key:
-
-```javascript
-// Sender (Alice) signs the message
-const signature = await signMessage(messageBody, DUMMY_PRIVATE_KEY);
-
-// Recipient (Bob) verifies the signature
-const isValid = verifyDidCommSignature(didcommMessage);
+```json
+{
+  "status": "ok",
+  "received_at": "2025-12-16T10:30:05Z"
+}
 ```
 
-🔐 **Note**: Signature is over the **encrypted** payload, ensuring:
-- Backend cannot forge messages
-- Tampering is detected
-- Sender's identity is verified
+### ACK Flow
+
+1. **Alice sends message** to Bob
+2. **Bob receives message** via SignalR
+3. **Bob verifies signature** cryptographically
+4. **Bob decrypts message** successfully
+5. **Bob sends automatic ACK** back to Alice (encrypted & signed)
+6. **Alice receives ACK** and updates message status
+7. **UI shows ACK status** (✅ ACK received or ⏳ Pending ACK)
+
+**Security Properties:**
+- ✅ ACKs are encrypted end-to-end
+- ✅ ACKs are cryptographically signed
+- ✅ ACKs prove successful decryption and signature verification
+- ✅ No ACK loops (ACKs don't trigger more ACKs)
+- ✅ Backend cannot read ACK content
+
+---
+
+### Sending a DIDComm Message with ACK Tracking
+
+```javascript
+// Send message
+const result = await window.ethereum.sendDidCommMessage(
+  'did:example:0x2222222222222222222222222222222222222222',
+  { text: 'Hello Bob from Alice!' }
+);
+
+// Check sent messages with ACK status
+const sentMessages = await window.ethereum.getSentDidCommMessages();
+console.log('Sent messages:', sentMessages);
+
+// Check specific message ACK status
+const ackStatus = await window.ethereum.getMessageAckStatus(result.messageId);
+console.log('ACK received:', ackStatus.ackReceived);
+```
+
+---
+
+## 📒 DIDComm v2 Features
+
+### Message Format
+
+🔐 **Encrypted Message** (sent to backend):
+
+```json
+{
+  "id": "unique-message-id-12345",
+  "type": "https://didcomm.org/basicmessage/2.0/message",
+  "from": "did:example:0x1111111111111111111111111111111111111111",
+  "to": "did:example:0x2222222222222222222222222222222222222222",
+  "createdTime": "2025-12-16T10:30:00Z",
+  "encryption": {
+    "alg": "ECDH-ES+A256GCM",
+    "ephemeralPublicKey": "MCowBQYDK2VuAyEA...",
+    "iv": "3q2+7w==",
+    "ciphertext": "a8sj3ls...",
+    "tag": "ZGVhZGJlZWY="
+  },
+  "signature": {
+    "alg": "ES256K",
+    "value": "0xa1a1a1a1...hashvalue..."
+  }
+}
+```
+
+### 🔐 Acknowledgement Messages
+
+ACKs are sent automatically when messages are successfully received, verified, and decrypted:
+
+```json
+{
+  "id": "ack-message-id-67890",
+  "type": "https://didcomm.org/notification/ack/2.0",
+  "from": "did:example:0x2222222222222222222222222222222222222222",
+  "to": "did:example:0x1111111111111111111111111111111111111111",
+  "thid": "unique-message-id-12345",
+  "createdTime": "2025-12-16T10:30:05Z",
+  "encryption": {
+    // Same encryption as regular messages
+  },
+  "signature": {
+    // Same signing as regular messages  
+  }
+}
+```
+
+**Decrypted ACK Body** (only visible to original sender):
+
+```json
+{
+  "status": "ok",
+  "received_at": "2025-12-16T10:30:05Z"
+}
+```
+
+### ACK Flow
+
+1. **Alice sends message** to Bob
+2. **Bob receives message** via SignalR
+3. **Bob verifies signature** cryptographically
+4. **Bob decrypts message** successfully
+5. **Bob sends automatic ACK** back to Alice (encrypted & signed)
+6. **Alice receives ACK** and updates message status
+7. **UI shows ACK status** (✅ ACK received or ⏳ Pending ACK)
+
+**Security Properties:**
+- ✅ ACKs are encrypted end-to-end
+- ✅ ACKs are cryptographically signed
+- ✅ ACKs prove successful decryption and signature verification
+- ✅ No ACK loops (ACKs don't trigger more ACKs)
+- ✅ Backend cannot read ACK content
 
 ---
 

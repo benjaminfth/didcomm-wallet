@@ -7,6 +7,21 @@ import {
   derivePublicKey 
 } from './signing.js';
 
+// Import DIDComm message builder
+import {
+  DIDCOMM_TYPES,
+  buildDidCommMessage,
+  buildAckMessage,
+  buildBasicMessage,
+  buildApprovalRequest,
+  buildApprovalResponse,
+  validateDidCommMessage,
+  isAckMessage,
+  isApprovalRequest,
+  isApprovalResponse,
+  getPrimaryRecipient,
+} from './didcomm-message.js';
+
 // Maintain approved origins and pending requests
 const approvedOrigins = new Set();
 const pending = new Map(); // id -> { origin, sendResponse }
@@ -79,6 +94,8 @@ function openSignWindow(id, message, origin){
 // ============================================================================
 // 🔐 REAL ECDSA SIGNING (replaces dummy signing)
 // ============================================================================
+// ACK message type (DIDComm v2 style)
+const ACK_MESSAGE_TYPE = 'https://didcomm.org/notification/ack/2.0';
 
 /**
  * Sign a DIDComm message using ECDSA secp256k1
@@ -441,13 +458,92 @@ async function decryptMessage(encryptionData) {
   }
 }
 
-// Handle received DIDComm message from SignalR (UPDATED with async verification)
+// ============================================================================
+// 🔐 ACK HANDLING (UPDATED to use DIDComm builder)
+// ============================================================================
+/**
+ * Send acknowledgement for a received message.
+ * Uses DIDComm v2 ACK format with proper threading.
+ */
+async function sendAcknowledgement(originalMessage) {
+  try {
+    console.log('[ACK] 📤 Sending ACK for message:', originalMessage.id);
+    
+    // Build DIDComm v2 compliant ACK message
+    const ackPlaintext = buildAckMessage(originalMessage, WALLET_DID);
+    
+    console.log('[ACK] Built DIDComm ACK:', ackPlaintext);
+    
+    // Encrypt, sign, and send (reuse existing flow)
+    const recipientDid = originalMessage.from;
+    const encryptionData = await encryptMessage(ackPlaintext.body, recipientDid);
+    
+    // Construct the wire message (encrypted DIDComm)
+    const ackMessage = {
+      id: ackPlaintext.id,
+      type: ackPlaintext.type,
+      from: ackPlaintext.from,
+      to: getPrimaryRecipient(ackPlaintext), // Backend expects string, not array
+      created_time: new Date(ackPlaintext.created_time * 1000).toISOString(),
+      thid: ackPlaintext.thid, // Thread reference to original message
+      encryption: encryptionData,
+    };
+    
+    // Sign the encrypted message
+    const signature = await signDidCommMessage(ackMessage);
+    ackMessage.signature = signature;
+    
+    // Send to backend
+    const response = await fetch(`${DIDCOMM_BACKEND_URL}/api/SendDidCommMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ackMessage),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    console.log('[ACK] ✅ ACK sent successfully');
+  } catch (error) {
+    console.error('[ACK] ❌ Failed to send ACK:', error);
+  }
+}
+
+/**
+ * Handle received ACK message.
+ * Updates the corresponding sent message with ACK status.
+ */
+function handleReceivedAck(ackMessage, decryptedBody) {
+  // thid contains the original message ID
+  const originalMessageId = ackMessage.thid;
+  
+  if (!originalMessageId) {
+    console.warn('[ACK] ACK missing thid (thread reference)');
+    return;
+  }
+  
+  // Find and update the sent message
+  const sentMessage = sentMessages.find(m => m.id === originalMessageId);
+  if (sentMessage) {
+    sentMessage.ackReceived = true;
+    sentMessage.ackTimestamp = new Date().toISOString();
+    sentMessage.ackStatus = decryptedBody.status || 'received';
+    console.log('[ACK] ✅ Updated sent message with ACK:', originalMessageId);
+  } else {
+    console.warn('[ACK] No matching sent message for ACK:', originalMessageId);
+  }
+}
+
+// Handle received DIDComm message from SignalR (UPDATED with DIDComm v2 routing)
 async function handleReceivedDidCommMessage(didcommMessage) {
   console.log('[DIDComm] 🔐 Encrypted message received. ID:', didcommMessage.id);
-  console.log('[DIDComm] Full DIDComm payload:', didcommMessage);
+  console.log('[DIDComm] Type:', didcommMessage.type);
 
   // Filter: Only accept messages addressed to this wallet
-  if (didcommMessage.to !== WALLET_DID) {
+  // Handle both array (DIDComm v2) and string (legacy) formats
+  const recipients = Array.isArray(didcommMessage.to) ? didcommMessage.to : [didcommMessage.to];
+  if (!recipients.includes(WALLET_DID)) {
     console.log('[DIDComm] Message not for this wallet. To:', didcommMessage.to, 'This wallet:', WALLET_DID);
     return;
   }
@@ -470,49 +566,145 @@ async function handleReceivedDidCommMessage(didcommMessage) {
   try {
     const decryptedBody = await decryptMessage(didcommMessage.encryption);
     console.log('[DIDComm] ✅ Message decrypted successfully');
-    console.debug('[DIDComm] Decrypted body:', decryptedBody);
 
-    receivedMessages.push({
-      ...didcommMessage,
-      body: decryptedBody,
-      receivedAt: new Date().toISOString(),
-      read: false
-    });
+    // Route based on DIDComm message type
+    switch (didcommMessage.type) {
+      case DIDCOMM_TYPES.ACK:
+        console.log('[DIDComm] 📨 Received ACK message');
+        handleReceivedAck(didcommMessage, decryptedBody);
+        return; // Don't store ACKs or send ACKs for ACKs
+        
+      case DIDCOMM_TYPES.APPROVAL_REQUEST:
+        console.log('[DIDComm] 📋 Received approval request');
+        handleApprovalRequest(didcommMessage, decryptedBody);
+        break;
+        
+      case DIDCOMM_TYPES.APPROVAL_RESPONSE:
+        console.log('[DIDComm] ✅ Received approval response');
+        handleApprovalResponse(didcommMessage, decryptedBody);
+        break;
+        
+      case DIDCOMM_TYPES.BASIC_MESSAGE:
+      default:
+        // Store as regular message
+        receivedMessages.push({
+          ...didcommMessage,
+          body: decryptedBody,
+          receivedAt: new Date().toISOString(),
+          read: false,
+        });
+        
+        // Update badge
+        const unreadCount = receivedMessages.filter(m => !m.read).length;
+        chrome.action.setBadgeText({ text: unreadCount.toString() });
+        chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
+        
+        console.log('[DIDComm] Message stored. Total:', receivedMessages.length);
+        
+        // Send ACK for non-ACK messages
+        await sendAcknowledgement(didcommMessage);
+        break;
+    }
     
-    // Show notification badge
-    const unreadCount = receivedMessages.filter(m => !m.read).length;
-    chrome.action.setBadgeText({ text: unreadCount.toString() });
-    chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
-    
-    console.log('[DIDComm] Message stored. Total messages:', receivedMessages.length, 'Unread:', unreadCount);
   } catch (err) {
     console.error('[DIDComm] ❌ Failed to decrypt message:', err);
   }
 }
 
-// Create and sign DIDComm message (UPDATED to use real signing)
-async function createSignedDidCommMessage(to, body) {
+/**
+ * Handle approval request (placeholder - extend as needed)
+ */
+function handleApprovalRequest(message, body) {
+  // Store with specific type for UI filtering
+  receivedMessages.push({
+    ...message,
+    body: body,
+    receivedAt: new Date().toISOString(),
+    read: false,
+    isApprovalRequest: true,
+  });
+  
+  // Update badge
+  const unreadCount = receivedMessages.filter(m => !m.read).length;
+  chrome.action.setBadgeText({ text: unreadCount.toString() });
+  chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' }); // Orange for requests
+  
+  // Send ACK
+  sendAcknowledgement(message);
+}
+
+/**
+ * Handle approval response (placeholder - extend as needed)
+ */
+function handleApprovalResponse(message, body) {
+  // Find the original request using thid
+  const originalRequestId = message.thid;
+  
+  console.log('[Approval] Response for request:', originalRequestId, 'Approved:', body.approved);
+  
+  // Could update UI, trigger callbacks, etc.
+  receivedMessages.push({
+    ...message,
+    body: body,
+    receivedAt: new Date().toISOString(),
+    read: false,
+    isApprovalResponse: true,
+  });
+  
+  // Send ACK
+  sendAcknowledgement(message);
+}
+
+// Create and sign DIDComm message (UPDATED to use DIDComm v2 builder)
+async function createSignedDidCommMessage(to, body, options = {}) {
   try {
-    // 🔐 Encrypt the message body (UNCHANGED - existing encryption logic)
-    const encryptionData = await encryptMessage(body, to);
+    // Determine message type
+    const messageType = options.type || DIDCOMM_TYPES.BASIC_MESSAGE;
     
-    const didcommMessage = {
-      type: 'https://didcomm.org/basicmessage/2.0/message',
+    // Build DIDComm v2 compliant plaintext message
+    const plaintextMessage = buildDidCommMessage({
+      type: messageType,
       from: WALLET_DID,
       to: to,
-      created_time: new Date().toISOString(),
-      id: crypto.randomUUID(),
-      
-      // 🔐 Add encrypted payload (body is now encrypted)
-      encryption: encryptionData
+      body: body,
+      thid: options.thid, // For responses/ACKs
+    });
+    
+    // Validate before proceeding
+    const validation = validateDidCommMessage(plaintextMessage);
+    if (!validation.valid) {
+      throw new Error(`Invalid DIDComm message: ${validation.errors.join(', ')}`);
+    }
+    
+    console.log('[DIDComm] Built plaintext message:', plaintextMessage);
+    
+    // 🔐 Encrypt the message body
+    const recipientDid = getPrimaryRecipient(plaintextMessage);
+    const encryptionData = await encryptMessage(body, recipientDid);
+    
+    // Construct wire message (what gets sent over the network)
+    const wireMessage = {
+      id: plaintextMessage.id,
+      type: plaintextMessage.type,
+      from: plaintextMessage.from,
+      to: recipientDid, // Backend currently expects string
+      created_time: new Date(plaintextMessage.created_time * 1000).toISOString(),
+      encryption: encryptionData,
     };
     
-    // 🔐 Sign the entire message using real ECDSA secp256k1
-    const signature = await signDidCommMessage(didcommMessage);
+    // Add thid if present (for threading)
+    if (plaintextMessage.thid) {
+      wireMessage.thid = plaintextMessage.thid;
+    }
+    
+    // 🔐 Sign the entire wire message
+    const signature = await signDidCommMessage(wireMessage);
     
     return {
-      ...didcommMessage,
-      signature: signature
+      ...wireMessage,
+      signature: signature,
+      // Store original for tracking
+      _plaintext: plaintextMessage,
     };
   } catch (error) {
     console.error('[DIDComm] Failed to create signed message:', error);
@@ -520,17 +712,18 @@ async function createSignedDidCommMessage(to, body) {
   }
 }
 
-// Send DIDComm message to backend
-async function sendDidCommMessage(to, body) {
+// Send DIDComm message to backend (UPDATED)
+async function sendDidCommMessage(to, body, options = {}) {
   try {
-    const signedMessage = await createSignedDidCommMessage(to, body);
+    const signedMessage = await createSignedDidCommMessage(to, body, options);
+    
+    // Remove internal plaintext before sending
+    const { _plaintext, ...wireMessage } = signedMessage;
     
     const response = await fetch(`${DIDCOMM_BACKEND_URL}/api/SendDidCommMessage`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(signedMessage)
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(wireMessage),
     });
     
     if (!response.ok) {
@@ -538,7 +731,25 @@ async function sendDidCommMessage(to, body) {
       throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
     }
     
-    return await response.json();
+    const result = await response.json();
+    
+    // Track sent message for ACK correlation (not for ACKs)
+    if (wireMessage.type !== DIDCOMM_TYPES.ACK) {
+      sentMessages.push({
+        ...wireMessage,
+        body: body,
+        sentAt: new Date().toISOString(),
+        ackReceived: false,
+        ackTimestamp: null,
+        ackStatus: null,
+      });
+      
+      if (sentMessages.length > 50) {
+        sentMessages = sentMessages.slice(-50);
+      }
+    }
+    
+    return { ...result, messageId: wireMessage.id };
   } catch (error) {
     console.error('[DIDComm] Failed to send message:', error);
     throw new Error(error.message || 'Failed to send DIDComm message');
@@ -705,15 +916,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ messages: receivedMessages });
       return false;
     }
-    case 'didcomm_markAsRead': {
+    case 'didcomm_getSentMessages': {
+      sendResponse({ messages: sentMessages });
+      return false;
+    }
+    case 'didcomm_getMessageStatus': {
       const messageId = msg.params && msg.params[0];
-      const message = receivedMessages.find(m => m.id === messageId);
-      if (message) {
-        message.read = true;
-        const unreadCount = receivedMessages.filter(m => !m.read).length;
-        chrome.action.setBadgeText({ text: unreadCount > 0 ? unreadCount.toString() : '' });
+      const sentMessage = sentMessages.find(m => m.id === messageId);
+      if (sentMessage) {
+        sendResponse({
+          id: messageId,
+          ackReceived: sentMessage.ackReceived,
+          ackTimestamp: sentMessage.ackTimestamp,
+          ackStatus: sentMessage.ackStatus
+        });
+      } else {
+        sendResponse({ id: messageId, ackReceived: false });
       }
-      sendResponse({ ok: true });
       return false;
     }
     case 'wallet_getDid': {

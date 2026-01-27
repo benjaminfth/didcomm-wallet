@@ -28,6 +28,7 @@
       <button id="connectBtn">1. Connect Wallet</button>
       <button id="sendBtn">2. Send DIDComm Message</button>
       <button id="refreshBtn">Refresh Messages</button>
+      <button id="sentBtn">View Sent Messages</button>
     </div>
 
     <div class="label">Recipient DID:</div>
@@ -48,18 +49,27 @@
         <div style="opacity:.6">No messages</div>
       </div>
     </div>
+
+    <div class="info">
+      <div class="label">Sent Messages (with ACK status):</div>
+      <div id="sentMessages" class="messages">
+        <div style="opacity:.6">No sent messages</div>
+      </div>
+    </div>
   </div>
 
   <script>
     const connectBtn = document.getElementById('connectBtn');
     const sendBtn = document.getElementById('sendBtn');
     const refreshBtn = document.getElementById('refreshBtn');
+    const sentBtn = document.getElementById('sentBtn');
     const recipientInput = document.getElementById('recipientInput');
     const messageInput = document.getElementById('messageInput');
     const statusText = document.getElementById('statusText');
     const accountEl = document.getElementById('account');
     const walletDidEl = document.getElementById('walletDid');
     const messagesEl = document.getElementById('messages');
+    const sentMessagesEl = document.getElementById('sentMessages');
 
     let currentAccount = null;
     let currentDid = null;
@@ -101,8 +111,8 @@
         return;
       }
       const to = recipientInput.value.trim();
-      const body = messageInput.value.trim();
-      if (!to || !body) {
+      const text = messageInput.value.trim();
+      if (!to || !text) {
         alert('Enter both recipient DID and message.');
         return;
       }
@@ -110,12 +120,16 @@
         statusText.textContent = 'Sending message...';
         statusText.style.color = '#f59e0b';
         
-        const result = await window.ethereum.sendDidCommMessage(to, body);
-        statusText.textContent = 'Message sent ✓';
+        // Send as DIDComm basic message format: body must be an object with "text" field
+        const result = await window.ethereum.sendDidCommMessage(to, { text: text });
+        statusText.textContent = 'Message sent ✓ (ID: ' + (result.messageId || 'unknown').slice(0,8) + '...)';
         statusText.style.color = '#10b981';
         messageInput.value = '';
+        
+        // Refresh sent messages to show the new message
+        await refreshSentMessages();
       } catch (e) {
-        statusText.textContent = 'Failed to send message';
+        statusText.textContent = 'Failed: ' + (e.message || 'Unknown error');
         statusText.style.color = '#ef4444';
         console.error('Send error:', e);
       }
@@ -123,6 +137,9 @@
 
     // 3. Refresh messages
     refreshBtn.onclick = refreshMessages;
+
+    // 4. View sent messages with ACK status
+    sentBtn.onclick = refreshSentMessages;
 
     async function refreshMessages() {
       if (!window.ethereum || !currentAccount) return;
@@ -150,6 +167,40 @@
         });
       } catch (e) {
         console.error('Refresh error:', e);
+      }
+    }
+
+    async function refreshSentMessages() {
+      if (!window.ethereum || !currentAccount) return;
+      try {
+        const result = await window.ethereum.getSentDidCommMessages();
+        const messages = result.messages || [];
+        
+        if (!messages.length) {
+          sentMessagesEl.innerHTML = '<div style="opacity:.6">No sent messages</div>';
+          return;
+        }
+        
+        sentMessagesEl.innerHTML = '';
+        messages.slice(-10).reverse().forEach(msg => {
+          const div = document.createElement('div');
+          div.className = 'message';
+          div.style.opacity = msg.ackReceived ? '1' : '0.7';
+          
+          const ackStatus = msg.ackReceived 
+            ? `✅ ACK (${new Date(msg.ackTimestamp).toLocaleTimeString()})`
+            : '⏳ Pending ACK';
+            
+          div.innerHTML = `
+            <div style="font-weight:600; color:#7c9ad4;">To: ${msg.to}</div>
+            <div style="margin:4px 0;">${msg.body.text || JSON.stringify(msg.body)}</div>
+            <div style="opacity:0.8; font-size:10px; color:${msg.ackReceived ? '#10b981' : '#f59e0b'};">${ackStatus}</div>
+            <div style="opacity:0.6; font-size:10px;">${new Date(msg.created_time).toLocaleString()}</div>
+          `;
+          sentMessagesEl.appendChild(div);
+        });
+      } catch (e) {
+        console.error('Refresh sent messages error:', e);
       }
     }
 
@@ -183,6 +234,17 @@
 
     // Refresh messages every 10 seconds
     setInterval(refreshMessages, 10000);
+
+    // Auto-refresh sent messages every 15 seconds
+    setInterval(refreshSentMessages, 15000);
+    
+    // Listen for ACK notifications
+    chrome?.runtime?.onMessage?.addListener((message) => {
+      if (message.type === 'MESSAGE_ACKNOWLEDGED') {
+        console.log('Message acknowledged:', message.messageId);
+        refreshSentMessages();
+      }
+    });
   </script>
 </body>
 </html>
