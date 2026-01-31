@@ -193,6 +193,7 @@ const SIGNALR_HUB_URL = `${DIDCOMM_BACKEND_URL}/didcommhub`;
 // DIDComm message storage and SignalR connection
 let signalRConnection = null;
 let receivedMessages = [];
+let sentMessages = []; // 🔐 Track sent messages for ACK correlation
 let offscreenDocumentCreated = false;
 
 // Initialize SignalR connection for receiving DIDComm messages
@@ -473,23 +474,27 @@ async function sendAcknowledgement(originalMessage) {
     const ackPlaintext = buildAckMessage(originalMessage, WALLET_DID);
     
     console.log('[ACK] Built DIDComm ACK:', ackPlaintext);
+    console.log('[ACK] Thread ID (thid):', ackPlaintext.thid);
     
     // Encrypt, sign, and send (reuse existing flow)
     const recipientDid = originalMessage.from;
     const encryptionData = await encryptMessage(ackPlaintext.body, recipientDid);
     
     // Construct the wire message (encrypted DIDComm)
+    // IMPORTANT: thid MUST be set before signing
     const ackMessage = {
       id: ackPlaintext.id,
       type: ackPlaintext.type,
       from: ackPlaintext.from,
       to: getPrimaryRecipient(ackPlaintext), // Backend expects string, not array
       created_time: new Date(ackPlaintext.created_time * 1000).toISOString(),
-      thid: ackPlaintext.thid, // Thread reference to original message
+      thid: originalMessage.id, // Thread reference to original message - use original ID directly
       encryption: encryptionData,
     };
     
-    // Sign the encrypted message
+    console.log('[ACK] Wire message thid:', ackMessage.thid);
+    
+    // Sign the encrypted message (signature includes thid)
     const signature = await signDidCommMessage(ackMessage);
     ackMessage.signature = signature;
     
@@ -504,7 +509,7 @@ async function sendAcknowledgement(originalMessage) {
       throw new Error(`HTTP ${response.status}`);
     }
     
-    console.log('[ACK] ✅ ACK sent successfully');
+    console.log('[ACK] ✅ ACK sent successfully with thid:', ackMessage.thid);
   } catch (error) {
     console.error('[ACK] ❌ Failed to send ACK:', error);
   }
@@ -516,10 +521,18 @@ async function sendAcknowledgement(originalMessage) {
  */
 function handleReceivedAck(ackMessage, decryptedBody) {
   // thid contains the original message ID
-  const originalMessageId = ackMessage.thid;
+  // Handle different casing possibilities from backend serialization
+  const originalMessageId = ackMessage.thid || ackMessage.Thid || ackMessage.threadId || ackMessage.ThreadId;
+  
+  console.log('[ACK] Processing ACK. Looking for thid in:', {
+    thid: ackMessage.thid,
+    Thid: ackMessage.Thid,
+    threadId: ackMessage.threadId,
+    resolved: originalMessageId
+  });
   
   if (!originalMessageId) {
-    console.warn('[ACK] ACK missing thid (thread reference)');
+    console.warn('[ACK] ACK missing thid (thread reference). Full message:', JSON.stringify(ackMessage, null, 2));
     return;
   }
   
@@ -532,6 +545,7 @@ function handleReceivedAck(ackMessage, decryptedBody) {
     console.log('[ACK] ✅ Updated sent message with ACK:', originalMessageId);
   } else {
     console.warn('[ACK] No matching sent message for ACK:', originalMessageId);
+    console.log('[ACK] Sent messages:', sentMessages.map(m => m.id));
   }
 }
 

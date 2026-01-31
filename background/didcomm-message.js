@@ -114,6 +114,10 @@ export function buildDidCommMessage({ type, from, to, body, thid, id }) {
  * @returns {Object} DIDComm ACK message
  */
 export function buildAckMessage(originalMessage, senderDid) {
+  if (!originalMessage.id) {
+    console.error('[buildAckMessage] Original message missing ID!');
+  }
+  
   return buildDidCommMessage({
     type: DIDCOMM_TYPES.ACK,
     from: senderDid,

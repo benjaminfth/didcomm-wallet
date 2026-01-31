@@ -53,11 +53,6 @@
     }
   });
 
-  // Optional: listen for internal broadcasts (future expansion)
-  window.addEventListener('message', (event) => {
-    // reserved
-  });
-
   const provider = {
     isMetaMask: false,
     isMyWallet: true,
@@ -95,24 +90,32 @@
     },
 
     // DIDComm messaging methods
-    sendDidCommMessage: function(to, body) {
+    sendDidCommMessage(to, body) {
       return this.request({ method: 'didcomm_send', params: [to, body] });
     },
     
-    getDidCommMessages: function() {
+    getDidCommMessages() {
       return this.request({ method: 'didcomm_getMessages' });
     },
     
-    markDidCommMessageAsRead: function(messageId) {
+    getSentDidCommMessages() {
+      return this.request({ method: 'didcomm_getSentMessages' });
+    },
+    
+    getMessageAckStatus(messageId) {
+      return this.request({ method: 'didcomm_getMessageStatus', params: [messageId] });
+    },
+    
+    markDidCommMessageAsRead(messageId) {
       return this.request({ method: 'didcomm_markAsRead', params: [messageId] });
     },
     
     // Wallet identity methods
-    getWalletDid: function() {
+    getWalletDid() {
       return this.request({ method: 'wallet_getDid' });
     },
     
-    getWalletAddress: function() {
+    getWalletAddress() {
       return this.request({ method: 'wallet_getAddress' });
     },
   };
@@ -124,108 +127,3 @@
   provider.request({ method: 'eth_chainId' }).catch(() => {});
   provider.request({ method: 'eth_accounts' }).catch(() => {});
 })();
-
-// Custom DIDComm methods
-window.ethereum.sendDidCommMessage = async (to, body) => {
-  return new Promise((resolve, reject) => {
-    const id = Date.now() + Math.random();
-    window.postMessage({ 
-      type: 'FROM_PAGE', 
-      method: 'didcomm_send', 
-      params: [to, body], 
-      id 
-    }, '*');
-    
-    const handler = (event) => {
-      if (event.source === window && event.data?.type === 'FROM_EXTENSION' && event.data.id === id) {
-        window.removeEventListener('message', handler);
-        if (event.data.error) reject(new Error(event.data.error.message || 'Unknown error'));
-        else resolve(event.data.result);
-      }
-    };
-    window.addEventListener('message', handler);
-  });
-};
-
-window.ethereum.getDidCommMessages = async () => {
-  return new Promise((resolve, reject) => {
-    const id = Date.now() + Math.random();
-    window.postMessage({ 
-      type: 'FROM_PAGE', 
-      method: 'didcomm_getMessages', 
-      id 
-    }, '*');
-    
-    const handler = (event) => {
-      if (event.source === window && event.data?.type === 'FROM_EXTENSION' && event.data.id === id) {
-        window.removeEventListener('message', handler);
-        if (event.data.error) reject(new Error(event.data.error.message || 'Unknown error'));
-        else resolve(event.data.result);
-      }
-    };
-    window.addEventListener('message', handler);
-  });
-};
-
-// Add ACK-related methods
-window.ethereum.getSentDidCommMessages = async () => {
-  return new Promise((resolve, reject) => {
-    const id = Date.now() + Math.random();
-    window.postMessage({ 
-      type: 'FROM_PAGE', 
-      method: 'didcomm_getSentMessages', 
-      id 
-    }, '*');
-    
-    const handler = (event) => {
-      if (event.source === window && event.data?.type === 'FROM_EXTENSION' && event.data.id === id) {
-        window.removeEventListener('message', handler);
-        if (event.data.error) reject(new Error(event.data.error.message || 'Unknown error'));
-        else resolve(event.data.result);
-      }
-    };
-    window.addEventListener('message', handler);
-  });
-};
-
-window.ethereum.getMessageAckStatus = async (messageId) => {
-  return new Promise((resolve, reject) => {
-    const id = Date.now() + Math.random();
-    window.postMessage({ 
-      type: 'FROM_PAGE', 
-      method: 'didcomm_getMessageStatus', 
-      params: [messageId],
-      id 
-    }, '*');
-    
-    const handler = (event) => {
-      if (event.source === window && event.data?.type === 'FROM_EXTENSION' && event.data.id === id) {
-        window.removeEventListener('message', handler);
-        if (event.data.error) reject(new Error(event.data.error.message || 'Unknown error'));
-        else resolve(event.data.result);
-      }
-    };
-    window.addEventListener('message', handler);
-  });
-};
-
-window.ethereum.markDidCommMessageAsRead = async (messageId) => {
-  return new Promise((resolve, reject) => {
-    const id = Date.now() + Math.random();
-    window.postMessage({ 
-      type: 'FROM_PAGE', 
-      method: 'didcomm_markAsRead', 
-      params: [messageId], 
-      id 
-    }, '*');
-    
-    const handler = (event) => {
-      if (event.source === window && event.data?.type === 'FROM_EXTENSION' && event.data.id === id) {
-        window.removeEventListener('message', handler);
-        if (event.data.error) reject(new Error(event.data.error.message || 'Unknown error'));
-        else resolve(event.data.result);
-      }
-    };
-    window.addEventListener('message', handler);
-  });
-};

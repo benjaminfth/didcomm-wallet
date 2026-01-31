@@ -87,33 +87,3 @@ public class KafkaConfig
     public string BootstrapServers { get; set; } = "localhost:9092";
     public string DidCommTopic { get; set; } = "didcomm-messages";
 }
-
-// DIDComm message model
-public class DidCommMessage
-{
-    public string Type { get; set; } = "";
-    public string From { get; set; } = "";
-    public string To { get; set; } = "";
-    // 🔐 Body is now encrypted - backend cannot read it
-    public EncryptionData? Encryption { get; set; }
-    public string CreatedTime { get; set; } = "";
-    public string Id { get; set; } = "";
-    public SignatureData? Signature { get; set; }
-}
-
-// 🔐 Encryption metadata (backend is blind to plaintext)
-public class EncryptionData
-{
-    public string Alg { get; set; } = "ECDH-ES+A256GCM";
-    public string EphemeralPublicKey { get; set; } = "";
-    public string Iv { get; set; } = "";
-    public string Ciphertext { get; set; } = "";
-    public string Tag { get; set; } = "";
-}
-
-// 🔐 Signature metadata
-public class SignatureData
-{
-    public string Alg { get; set; } = "ES256K";
-    public string Value { get; set; } = "";
-}

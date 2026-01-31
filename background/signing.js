@@ -35,7 +35,7 @@ function canonicalize(obj) {
  * @returns {Object} - Payload for signing
  */
 function createSigningPayload(message) {
-  return {
+  const payload = {
     id: message.id,
     type: message.type,
     from: message.from,
@@ -49,6 +49,13 @@ function createSigningPayload(message) {
       tag: message.encryption.tag
     }
   };
+  
+  // Include thid if present (for ACKs and threaded messages)
+  if (message.thid) {
+    payload.thid = message.thid;
+  }
+  
+  return payload;
 }
 
 /**
